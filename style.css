@@ -1,0 +1,194 @@
+:root {
+  color-scheme: dark;
+  font-family:
+    Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI",
+    sans-serif;
+  background: #050505;
+  color: #f8f8f4;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body {
+  width: 100%;
+  height: 100%;
+  margin: 0;
+  overflow: hidden;
+}
+
+body {
+  min-width: 320px;
+}
+
+button {
+  border: 1px solid rgba(255, 255, 255, 0.28);
+  border-radius: 8px;
+  background: rgba(10, 10, 10, 0.54);
+  color: inherit;
+  font: inherit;
+  font-weight: 700;
+  cursor: pointer;
+  backdrop-filter: blur(16px);
+}
+
+button:hover {
+  background: rgba(255, 255, 255, 0.16);
+}
+
+button:focus-visible {
+  outline: 2px solid #fff;
+  outline-offset: 3px;
+}
+
+.stage {
+  position: fixed;
+  inset: 0;
+  overflow: hidden;
+  background: #050505;
+}
+
+#camera {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  opacity: 0;
+  pointer-events: none;
+}
+
+#output {
+  display: block;
+  width: 100vw;
+  height: 100vh;
+}
+
+.hud {
+  position: fixed;
+  top: max(16px, env(safe-area-inset-top));
+  right: max(16px, env(safe-area-inset-right));
+  left: max(16px, env(safe-area-inset-left));
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 12px;
+  pointer-events: none;
+}
+
+.status,
+#fullscreenButton {
+  min-height: 38px;
+  padding: 0 14px;
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+  font-size: 13px;
+  letter-spacing: 0;
+  text-transform: uppercase;
+  background: rgba(10, 10, 10, 0.5);
+  border: 1px solid rgba(255, 255, 255, 0.24);
+  border-radius: 8px;
+  backdrop-filter: blur(16px);
+  box-shadow: 0 12px 30px rgba(0, 0, 0, 0.22);
+}
+
+.status {
+  max-width: min(64vw, 420px);
+}
+
+#statusText {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.status-dot {
+  width: 8px;
+  height: 8px;
+  flex: 0 0 auto;
+  border-radius: 999px;
+  background: #f5c542;
+  box-shadow: 0 0 16px rgba(245, 197, 66, 0.85);
+}
+
+.status-dot.ready {
+  background: #52ff8d;
+  box-shadow: 0 0 16px rgba(82, 255, 141, 0.9);
+}
+
+.status-dot.error {
+  background: #ff4a4a;
+  box-shadow: 0 0 16px rgba(255, 74, 74, 0.9);
+}
+
+#fullscreenButton {
+  pointer-events: auto;
+}
+
+.permission-panel {
+  position: fixed;
+  inset: 0;
+  display: grid;
+  place-content: center;
+  gap: 14px;
+  padding: 28px;
+  text-align: center;
+  background:
+    linear-gradient(rgba(5, 5, 5, 0.18), rgba(5, 5, 5, 0.78)),
+    radial-gradient(circle at 50% 42%, rgba(255, 255, 255, 0.16), transparent 32%),
+    #050505;
+  transition:
+    opacity 220ms ease,
+    visibility 220ms ease;
+}
+
+.permission-panel.is-hidden {
+  opacity: 0;
+  visibility: hidden;
+  pointer-events: none;
+}
+
+.permission-panel h1 {
+  margin: 0;
+  font-size: clamp(40px, 8vw, 92px);
+  line-height: 0.94;
+  letter-spacing: 0;
+}
+
+.permission-panel p {
+  max-width: 520px;
+  margin: 0 auto;
+  color: rgba(248, 248, 244, 0.72);
+  font-size: 16px;
+  line-height: 1.6;
+}
+
+#startButton {
+  justify-self: center;
+  min-width: 168px;
+  min-height: 48px;
+  margin-top: 8px;
+  padding: 0 22px;
+  background: #f8f8f4;
+  color: #050505;
+  border-color: #f8f8f4;
+}
+
+@media (max-width: 560px) {
+  .hud {
+    align-items: stretch;
+  }
+
+  .status,
+  #fullscreenButton {
+    min-height: 34px;
+    padding: 0 10px;
+    font-size: 11px;
+  }
+
+  .permission-panel {
+    place-content: end center;
+    padding-bottom: max(48px, env(safe-area-inset-bottom));
+  }
+}
