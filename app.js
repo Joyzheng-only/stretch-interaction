@@ -15,6 +15,11 @@ const statusDot = document.querySelector("#statusDot");
 
 const MIN_STRETCH_SOURCE_RATIO = 0.02;
 const MAX_STRETCH_SOURCE_RATIO = 0.08;
+const HAND_TRAIL_COLORS = ["#CEFF00", "#FF3C90"];
+const HAND_TRAIL_MAX_POINTS = 28;
+const HAND_TRAIL_MAX_AGE = 850;
+const HAND_TRAIL_MIN_STEP = 4;
+const HAND_TRAIL_WIDTH = 8;
 
 const BLUEPRINTS = [
   { anchor: "head", dx: -0.02, dy: 0.02, size: 0.28, aspect: 1 },
@@ -66,6 +71,7 @@ let mediaRecorder = null;
 let recordedChunks = [];
 let processingVideo = false;
 let recorderExtension = "webm";
+let handTrails = [];
 let view = { x: 0, y: 0, width: 1, height: 1, scale: 1 };
 let animationFrame = 0;
 
@@ -221,6 +227,10 @@ function drawIdle() {
   ctx.fillRect(0, 0, canvas.width, canvas.height);
 }
 
+function resetHandTrails() {
+  handTrails = [];
+}
+
 function canvasToVideoX(x) {
   return (x - view.x) / view.scale;
 }
@@ -235,6 +245,90 @@ function keypointToCanvas(keypoint, minScore = 0.22) {
     x: view.x + keypoint.x * view.scale,
     y: view.y + keypoint.y * view.scale,
   };
+}
+
+function getPoseCanvasPoint(pose, keypointName, minScore = 0.22) {
+  if (!pose?.keypoints?.length) return null;
+  const keypoint = pose.keypoints.find((item) => (item.name || item.part) === keypointName);
+  return keypointToCanvas(keypoint, minScore);
+}
+
+function getPersonTrailState(personIndex) {
+  if (!handTrails[personIndex]) {
+    handTrails[personIndex] = {
+      left: [],
+      right: [],
+    };
+  }
+
+  return handTrails[personIndex];
+}
+
+function updateTrail(points, point, now) {
+  if (!point) return;
+
+  const lastPoint = points[points.length - 1];
+  if (lastPoint && Math.hypot(lastPoint.x - point.x, lastPoint.y - point.y) < HAND_TRAIL_MIN_STEP) {
+    lastPoint.x = point.x;
+    lastPoint.y = point.y;
+    lastPoint.t = now;
+    return;
+  }
+
+  points.push({ x: point.x, y: point.y, t: now });
+  while (points.length > HAND_TRAIL_MAX_POINTS) {
+    points.shift();
+  }
+}
+
+function pruneTrail(points, now) {
+  while (points.length && now - points[0].t > HAND_TRAIL_MAX_AGE) {
+    points.shift();
+  }
+}
+
+function drawTrail(points, color) {
+  if (points.length < 2) return;
+
+  ctx.save();
+  ctx.lineCap = "round";
+  ctx.lineJoin = "round";
+  ctx.strokeStyle = color;
+  ctx.shadowColor = color;
+  ctx.shadowBlur = 14;
+
+  for (let i = 1; i < points.length; i += 1) {
+    const alpha = i / (points.length - 1);
+    ctx.globalAlpha = 0.12 + alpha * 0.88;
+    ctx.lineWidth = HAND_TRAIL_WIDTH;
+    ctx.beginPath();
+    ctx.moveTo(points[i - 1].x, points[i - 1].y);
+    ctx.lineTo(points[i].x, points[i].y);
+    ctx.stroke();
+  }
+
+  ctx.restore();
+}
+
+function updateHandTrailsForPerson(personIndex, pose) {
+  const trailState = getPersonTrailState(personIndex);
+  const now = performance.now();
+  const leftHand = getPoseCanvasPoint(pose, "left_wrist", 0.18);
+  const rightHand = getPoseCanvasPoint(pose, "right_wrist", 0.18);
+
+  updateTrail(trailState.left, leftHand, now);
+  updateTrail(trailState.right, rightHand, now);
+  pruneTrail(trailState.left, now);
+  pruneTrail(trailState.right, now);
+}
+
+function drawHandTrails() {
+  handTrails.forEach((trailState, personIndex) => {
+    if (!trailState) return;
+    const color = HAND_TRAIL_COLORS[personIndex % HAND_TRAIL_COLORS.length];
+    drawTrail(trailState.left, color);
+    drawTrail(trailState.right, color);
+  });
 }
 
 function poseToAnchors(pose, fallbackBox) {
@@ -530,6 +624,10 @@ function drawPersonEffect(detection, personIndex) {
   const anchors = poseToAnchors(pose, box) || boxToFallbackAnchors(box);
   const blockCount = pickCountForDistance(box);
 
+  if (pose) {
+    updateHandTrailsForPerson(personIndex, pose);
+  }
+
   ctx.save();
   ctx.shadowColor = "rgba(0, 0, 0, 0.08)";
   ctx.shadowBlur = Math.max(3, canvas.width * 0.003);
@@ -605,7 +703,16 @@ function render() {
 
   if (video.readyState >= HTMLMediaElement.HAVE_CURRENT_DATA) {
     drawVideoCover();
-    detections.forEach(drawPersonEffect);
+    const orderedDetections = detections
+      .map((detection) => ({
+        detection,
+        centerX: toCanvasBox(detection.bbox).x + toCanvasBox(detection.bbox).width * 0.5,
+      }))
+      .sort((a, b) => a.centerX - b.centerX)
+      .map((entry) => entry.detection);
+
+    orderedDetections.forEach(drawPersonEffect);
+    drawHandTrails();
   } else {
     drawIdle();
   }
@@ -635,6 +742,7 @@ async function startCamera() {
 
   try {
     resetDownload();
+    resetHandTrails();
     stopCameraStream();
     if (uploadedVideoUrl) {
       URL.revokeObjectURL(uploadedVideoUrl);
@@ -732,6 +840,7 @@ async function handleVideoFile(file) {
   if (!file) return;
 
   resetDownload();
+  resetHandTrails();
   stopCameraStream();
   if (uploadedVideoUrl) {
     URL.revokeObjectURL(uploadedVideoUrl);
@@ -781,6 +890,7 @@ async function processUploadedVideo() {
     processVideoButton.disabled = true;
     permissionPanel.classList.add("is-hidden");
     resetDownload();
+    resetHandTrails();
     setStatus("加载识别模型");
     await loadModels();
 
