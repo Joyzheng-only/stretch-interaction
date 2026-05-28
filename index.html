@@ -16,15 +16,24 @@
           <span id="statusDot" class="status-dot"></span>
           <span id="statusText">准备摄像头</span>
         </div>
-        <button id="fullscreenButton" type="button" title="全屏">
-          <span>全屏</span>
-        </button>
+        <div class="hud-actions">
+          <button id="uploadButton" type="button" title="上传视频">上传</button>
+          <a id="downloadLink" class="download-link" download="stretch-effect.webm">下载</a>
+          <button id="fullscreenButton" type="button" title="全屏">
+            <span>全屏</span>
+          </button>
+        </div>
       </section>
 
       <section id="permissionPanel" class="permission-panel">
         <h1>Stretch Camera</h1>
-        <p>打开摄像头后，画面会占满屏幕，并为识别到的人物生成实时拉伸网格。</p>
-        <button id="startButton" type="button">开启摄像头</button>
+        <p>打开摄像头实时生成拉伸网格，或上传视频处理后下载到本地。</p>
+        <div class="panel-actions">
+          <button id="startButton" type="button">开启摄像头</button>
+          <button id="selectVideoButton" type="button">选择视频</button>
+          <button id="processVideoButton" type="button" disabled>处理视频</button>
+        </div>
+        <input id="videoUpload" type="file" accept="video/*" />
       </section>
     </main>
 

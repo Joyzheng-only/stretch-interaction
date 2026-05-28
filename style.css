@@ -34,6 +34,11 @@ button {
   backdrop-filter: blur(16px);
 }
 
+button:disabled {
+  cursor: not-allowed;
+  opacity: 0.42;
+}
+
 button:hover {
   background: rgba(255, 255, 255, 0.16);
 }
@@ -62,6 +67,12 @@ button:focus-visible {
   display: block;
   width: 100vw;
   height: 100vh;
+  object-fit: cover;
+}
+
+.stage.is-video-file #output {
+  background: #050505;
+  object-fit: contain;
 }
 
 .hud {
@@ -77,7 +88,8 @@ button:focus-visible {
 }
 
 .status,
-#fullscreenButton {
+.hud-actions > *,
+.download-link {
   min-height: 38px;
   padding: 0 14px;
   display: inline-flex;
@@ -126,6 +138,23 @@ button:focus-visible {
   pointer-events: auto;
 }
 
+.hud-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  pointer-events: auto;
+}
+
+.download-link {
+  color: inherit;
+  text-decoration: none;
+  pointer-events: auto;
+}
+
+.download-link:not(.is-ready) {
+  display: none;
+}
+
 .permission-panel {
   position: fixed;
   inset: 0;
@@ -164,12 +193,34 @@ button:focus-visible {
   line-height: 1.6;
 }
 
-#startButton {
+.panel-actions {
   justify-self: center;
-  min-width: 168px;
-  min-height: 48px;
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: 10px;
   margin-top: 8px;
+}
+
+#videoUpload {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  opacity: 0;
+  pointer-events: none;
+}
+
+#startButton,
+#selectVideoButton,
+#processVideoButton {
+  justify-self: center;
+  min-width: 132px;
+  min-height: 48px;
   padding: 0 22px;
+}
+
+#startButton,
+#processVideoButton {
   background: #f8f8f4;
   color: #050505;
   border-color: #f8f8f4;
@@ -181,10 +232,15 @@ button:focus-visible {
   }
 
   .status,
-  #fullscreenButton {
+  .hud-actions > *,
+  .download-link {
     min-height: 34px;
     padding: 0 10px;
     font-size: 11px;
+  }
+
+  .hud-actions {
+    gap: 6px;
   }
 
   .permission-panel {

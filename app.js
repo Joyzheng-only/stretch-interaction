@@ -1,7 +1,13 @@
 const video = document.querySelector("#camera");
 const canvas = document.querySelector("#output");
 const ctx = canvas.getContext("2d", { alpha: false });
+const stage = document.querySelector(".stage");
 const startButton = document.querySelector("#startButton");
+const selectVideoButton = document.querySelector("#selectVideoButton");
+const processVideoButton = document.querySelector("#processVideoButton");
+const uploadButton = document.querySelector("#uploadButton");
+const videoUpload = document.querySelector("#videoUpload");
+const downloadLink = document.querySelector("#downloadLink");
 const fullscreenButton = document.querySelector("#fullscreenButton");
 const permissionPanel = document.querySelector("#permissionPanel");
 const statusText = document.querySelector("#statusText");
@@ -54,6 +60,12 @@ let detections = [];
 let lastDetectionAt = 0;
 let detectionBusy = false;
 let running = false;
+let sourceMode = "idle";
+let uploadedVideoUrl = "";
+let mediaRecorder = null;
+let recordedChunks = [];
+let processingVideo = false;
+let recorderExtension = "webm";
 let view = { x: 0, y: 0, width: 1, height: 1, scale: 1 };
 let animationFrame = 0;
 
@@ -63,10 +75,70 @@ function setStatus(message, state = "loading") {
   statusDot.classList.toggle("error", state === "error");
 }
 
+function resetDownload() {
+  const existingUrl = downloadLink.getAttribute("href");
+  if (existingUrl) {
+    URL.revokeObjectURL(existingUrl);
+  }
+  downloadLink.removeAttribute("href");
+  downloadLink.classList.remove("is-ready");
+}
+
+function stopCameraStream() {
+  if (video.srcObject instanceof MediaStream) {
+    video.srcObject.getTracks().forEach((track) => track.stop());
+    video.srcObject = null;
+  }
+}
+
+async function loadModels() {
+  if (!window.cocoSsd) {
+    throw new Error("COCO-SSD model script was not loaded");
+  }
+
+  if (!model) {
+    model = await cocoSsd.load({ base: "lite_mobilenet_v2" });
+  }
+
+  if (!poseDetector && window.poseDetection) {
+    try {
+      if (window.tf?.setBackend) {
+        await tf.setBackend("webgl");
+        await tf.ready();
+      }
+      poseDetector = await poseDetection.createDetector(
+        poseDetection.SupportedModels.MoveNet,
+        {
+          modelType: poseDetection.movenet.modelType.MULTIPOSE_LIGHTNING,
+          enableTracking: true,
+          trackerType: poseDetection.TrackerType?.BoundingBox,
+        },
+      );
+    } catch (poseError) {
+      try {
+        poseDetector = await poseDetection.createDetector(
+          poseDetection.SupportedModels.MoveNet,
+          { modelType: poseDetection.movenet.modelType.SINGLEPOSE_LIGHTNING },
+        );
+      } catch (singlePoseError) {
+        console.warn("Pose detector is unavailable; using narrowed body boxes.", poseError, singlePoseError);
+      }
+    }
+  }
+}
+
 function resizeCanvas() {
   const pixelRatio = Math.min(window.devicePixelRatio || 1, 2);
-  const width = Math.floor(window.innerWidth * pixelRatio);
-  const height = Math.floor(window.innerHeight * pixelRatio);
+  const usingUploadedVideo = sourceMode === "file" && video.videoWidth && video.videoHeight;
+  const exportScale = usingUploadedVideo
+    ? Math.min(1, 1280 / Math.max(video.videoWidth, video.videoHeight))
+    : 1;
+  const width = usingUploadedVideo
+    ? Math.round(video.videoWidth * exportScale)
+    : Math.floor(window.innerWidth * pixelRatio);
+  const height = usingUploadedVideo
+    ? Math.round(video.videoHeight * exportScale)
+    : Math.floor(window.innerHeight * pixelRatio);
 
   if (canvas.width !== width || canvas.height !== height) {
     canvas.width = width;
@@ -157,8 +229,8 @@ function canvasToVideoY(y) {
   return (y - view.y) / view.scale;
 }
 
-function keypointToCanvas(keypoint) {
-  if (!keypoint || keypoint.score < 0.22) return null;
+function keypointToCanvas(keypoint, minScore = 0.22) {
+  if (!keypoint || keypoint.score < minScore) return null;
   return {
     x: view.x + keypoint.x * view.scale,
     y: view.y + keypoint.y * view.scale,
@@ -513,7 +585,12 @@ async function detectPeople() {
       .slice(0, 6)
       .map((item) => ({ ...item, poses }));
 
-    const label = detections.length ? `识别到 ${detections.length} 人` : "等待人物进入画面";
+    const progress = video.duration
+      ? ` ${Math.min(100, Math.round((video.currentTime / video.duration) * 100))}%`
+      : "";
+    const label = processingVideo
+      ? `正在处理视频${progress}`
+      : detections.length ? `识别到 ${detections.length} 人` : "等待人物进入画面";
     setStatus(label, "ready");
   } catch (error) {
     setStatus("识别模型运行失败", "error");
@@ -539,6 +616,17 @@ function render() {
     detectPeople();
   }
 
+  if (processingVideo) {
+    const progress = video.duration
+      ? `正在处理视频 ${Math.min(100, Math.round((video.currentTime / video.duration) * 100))}%`
+      : "正在处理视频";
+    setStatus(progress, "ready");
+
+    if (video.ended || (video.duration && video.currentTime >= video.duration - 0.05)) {
+      stopVideoRecording();
+    }
+  }
+
   animationFrame = requestAnimationFrame(render);
 }
 
@@ -546,6 +634,19 @@ async function startCamera() {
   if (running) return;
 
   try {
+    resetDownload();
+    stopCameraStream();
+    if (uploadedVideoUrl) {
+      URL.revokeObjectURL(uploadedVideoUrl);
+      uploadedVideoUrl = "";
+    }
+    sourceMode = "camera";
+    processingVideo = false;
+    processVideoButton.disabled = true;
+    stage.classList.remove("is-video-file");
+    video.removeAttribute("src");
+    video.load();
+
     setStatus("请求摄像头权限");
     const stream = await navigator.mediaDevices.getUserMedia({
       video: {
@@ -557,41 +658,12 @@ async function startCamera() {
     });
 
     video.srcObject = stream;
+    video.muted = true;
     await video.play();
     permissionPanel.classList.add("is-hidden");
 
     setStatus("加载人物识别模型");
-    if (!window.cocoSsd) {
-      throw new Error("COCO-SSD model script was not loaded");
-    }
-    if (!model) {
-      model = await cocoSsd.load({ base: "lite_mobilenet_v2" });
-    }
-    if (!poseDetector && window.poseDetection) {
-      try {
-        if (window.tf?.setBackend) {
-          await tf.setBackend("webgl");
-          await tf.ready();
-        }
-        poseDetector = await poseDetection.createDetector(
-          poseDetection.SupportedModels.MoveNet,
-          {
-            modelType: poseDetection.movenet.modelType.MULTIPOSE_LIGHTNING,
-            enableTracking: true,
-            trackerType: poseDetection.TrackerType?.BoundingBox,
-          },
-        );
-      } catch (poseError) {
-        try {
-          poseDetector = await poseDetection.createDetector(
-            poseDetection.SupportedModels.MoveNet,
-            { modelType: poseDetection.movenet.modelType.SINGLEPOSE_LIGHTNING },
-          );
-        } catch (singlePoseError) {
-          console.warn("Pose detector is unavailable; using narrowed body boxes.", poseError, singlePoseError);
-        }
-      }
-    }
+    await loadModels();
 
     running = true;
     setStatus("等待人物进入画面", "ready");
@@ -602,6 +674,177 @@ async function startCamera() {
         ? "识别库加载失败"
         : "无法打开摄像头";
     setStatus(message, "error");
+    console.error(error);
+  }
+}
+
+function chooseRecorderFormat() {
+  const candidates = [
+    { mimeType: "video/webm;codecs=vp9", extension: "webm" },
+    { mimeType: "video/webm;codecs=vp8", extension: "webm" },
+    { mimeType: "video/webm", extension: "webm" },
+    { mimeType: "video/mp4;codecs=h264", extension: "mp4" },
+    { mimeType: "video/mp4", extension: "mp4" },
+  ];
+  return candidates.find((format) => MediaRecorder.isTypeSupported(format.mimeType)) || {
+    mimeType: "",
+    extension: "webm",
+  };
+}
+
+function stopVideoRecording() {
+  if (!processingVideo) return;
+
+  running = false;
+  processingVideo = false;
+  video.pause();
+
+  if (mediaRecorder?.state === "recording") {
+    try {
+      mediaRecorder.requestData();
+    } catch {
+      // Some browsers throw if requestData is called during finalization.
+    }
+    mediaRecorder.stop();
+  }
+}
+
+function waitForEvent(target, eventName) {
+  return new Promise((resolve) => {
+    target.addEventListener(eventName, resolve, { once: true });
+  });
+}
+
+function seekVideoToStart() {
+  return new Promise((resolve) => {
+    const done = () => {
+      video.removeEventListener("seeked", done);
+      window.clearTimeout(timeout);
+      resolve();
+    };
+    const timeout = window.setTimeout(done, 250);
+    video.addEventListener("seeked", done, { once: true });
+    video.currentTime = 0;
+  });
+}
+
+async function handleVideoFile(file) {
+  if (!file) return;
+
+  resetDownload();
+  stopCameraStream();
+  if (uploadedVideoUrl) {
+    URL.revokeObjectURL(uploadedVideoUrl);
+  }
+
+  sourceMode = "file";
+  running = false;
+  processingVideo = false;
+  detections = [];
+  detectionBusy = false;
+  processVideoButton.disabled = true;
+  stage.classList.add("is-video-file");
+  permissionPanel.classList.remove("is-hidden");
+  uploadedVideoUrl = URL.createObjectURL(file);
+
+  video.pause();
+  video.srcObject = null;
+  video.src = uploadedVideoUrl;
+  video.muted = true;
+  video.loop = false;
+  video.playsInline = true;
+  video.preload = "auto";
+  video.load();
+
+  setStatus("读取视频文件");
+  if (video.readyState < HTMLMediaElement.HAVE_METADATA) {
+    await waitForEvent(video, "loadedmetadata");
+  }
+  resizeCanvas();
+
+  await seekVideoToStart();
+
+  processVideoButton.disabled = false;
+  setStatus(`已选择视频 ${Math.round(video.duration || 0)} 秒`, "ready");
+}
+
+async function processUploadedVideo() {
+  if (sourceMode !== "file" || !uploadedVideoUrl || processingVideo) return;
+  if (!window.MediaRecorder || !canvas.captureStream) {
+    setStatus("当前浏览器不支持视频导出", "error");
+    return;
+  }
+
+  try {
+    processingVideo = true;
+    running = false;
+    processVideoButton.disabled = true;
+    permissionPanel.classList.add("is-hidden");
+    resetDownload();
+    setStatus("加载识别模型");
+    await loadModels();
+
+    detections = [];
+    detectionBusy = false;
+    video.pause();
+    await seekVideoToStart();
+    resizeCanvas();
+    drawVideoCover();
+
+    const outputStream = canvas.captureStream(30);
+    const { mimeType, extension } = chooseRecorderFormat();
+    recorderExtension = extension;
+    recordedChunks = [];
+    mediaRecorder = new MediaRecorder(
+      outputStream,
+      {
+        ...(mimeType ? { mimeType } : {}),
+        videoBitsPerSecond: Math.min(12_000_000, Math.max(4_000_000, canvas.width * canvas.height * 4)),
+      },
+    );
+
+    mediaRecorder.addEventListener("dataavailable", (event) => {
+      if (event.data.size > 0) {
+        recordedChunks.push(event.data);
+      }
+    });
+
+    mediaRecorder.addEventListener("stop", () => {
+      if (!recordedChunks.length) {
+        setStatus("没有录制到视频数据", "error");
+        processVideoButton.disabled = false;
+        permissionPanel.classList.remove("is-hidden");
+        return;
+      }
+
+      const blob = new Blob(recordedChunks, { type: mediaRecorder.mimeType || mimeType || "video/webm" });
+      const url = URL.createObjectURL(blob);
+      downloadLink.href = url;
+      downloadLink.download = `stretch-effect-${Date.now()}.${recorderExtension}`;
+      downloadLink.classList.add("is-ready");
+      processingVideo = false;
+      running = false;
+      processVideoButton.disabled = false;
+      setStatus("视频处理完成", "ready");
+    }, { once: true });
+
+    video.addEventListener("ended", () => {
+      stopVideoRecording();
+    }, { once: true });
+
+    mediaRecorder.start(1000);
+    running = true;
+    setStatus("正在处理并录制视频");
+    await video.play();
+  } catch (error) {
+    processingVideo = false;
+    running = false;
+    processVideoButton.disabled = false;
+    permissionPanel.classList.remove("is-hidden");
+    if (mediaRecorder?.state === "recording") {
+      mediaRecorder.stop();
+    }
+    setStatus("视频处理失败", "error");
     console.error(error);
   }
 }
@@ -620,6 +863,15 @@ async function toggleFullscreen() {
 
 window.addEventListener("resize", resizeCanvas);
 startButton.addEventListener("click", startCamera);
+selectVideoButton.addEventListener("click", () => videoUpload.click());
+uploadButton.addEventListener("click", () => videoUpload.click());
+videoUpload.addEventListener("change", () => {
+  handleVideoFile(videoUpload.files?.[0]).catch((error) => {
+    setStatus("视频读取失败", "error");
+    console.error(error);
+  });
+});
+processVideoButton.addEventListener("click", processUploadedVideo);
 fullscreenButton.addEventListener("click", toggleFullscreen);
 document.addEventListener("fullscreenchange", () => {
   fullscreenButton.querySelector("span").textContent = document.fullscreenElement ? "退出" : "全屏";
